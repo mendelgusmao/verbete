@@ -9,16 +9,10 @@ import sys
 import unidecode
 from typing import Any, List, Literal, Optional, Tuple
 import asyncio, telnetlib3
-import string
-import secrets
-from dataclasses import dataclass
-import json
 
-ALPHABET = string.ascii_letters + string.digits
+from wordle.session import Session, generate_password
 
-
-logger = logging.getLogger(__name__)
-HERE = Path(__file__).parent.resolve()
+HERE = Path(__file__).parent.parent.resolve()
 
 RESET = "\u001b[0m"
 WHITE = "\u001b[37m"
@@ -41,61 +35,12 @@ Depois de cada tentativa, as peças mostram o quão perto você está da soluç�
 Digite a senha seguida de ENTER ou somente ENTER para começar uma nova sessão.\r
 """
 
+
+logger = logging.getLogger(__name__)
+
+
 class InvalidWord(Exception):
     ...
-
-class SessionNotFound(Exception):
-    ...
-
-
-@dataclass
-class GameResult:
-    won: bool
-    tries: int
-
-class Session:
-    password: str
-    games: List[Game]
-
-    def __init__(self, password: str, games: Optional[List[int]] = None) -> None:
-        self.password = password
-        self.games = [] if games is None else games
-
-    def add_game(self, won: bool, tries: int) -> None:
-        game = GameResult(won=won, tries=tries)
-        self.games.append(game.__dict__)
-
-        session_file = HERE / "sessions" / self.password
-
-        with open(session_file, 'w') as f:
-            json.dump(self.games, f)
-
-    def stats(self) -> Dict[str, Any]:
-        games = len(self.games)
-        wins = len([g for g in self.games if g.won])
-        distribution = defaultdict(int)
-
-        for game in games:
-            distribution[game.tries] += 1
-
-        return {
-            "games": games,
-            "wins": wins,
-            "current_streak": 0,
-            "max_streak": 0,
-            "distribution": distribution,
-        }
-
-    @staticmethod
-    def get(password: str) -> Session:
-        try:
-            session_file = HERE / "sessions" / password
-
-            with open(session_file, "r") as f:
-                games = json.load(f)
-                return Session(password, games)
-        except FileNotFound:
-            raise SessionNotFound()
 
 CORPUS = os.environ.get("CORPUS") or "corpus.txt"
 
@@ -105,10 +50,6 @@ with open((HERE / f"var/{CORPUS}"), "r") as f:
         for w in f.readlines()
     }
 
-
-def generate_password() -> str:
-    pw = ''.join(secrets.choice(ALPHABET) for i in range(8)).upper()
-    return pw[:4] + "-" + pw[4:]
 
 def load_corpus(seed: int) -> str:
     random.seed(seed+1)
@@ -153,7 +94,7 @@ async def get_or_create_session(reader, writer) -> Session:
                 except SessionNotFound:
                     writer.write("Senha inválida!\r\n")
                     password = generate_password()
-                    return Session(password)
+                    return Session()
             else:
                 password = generate_password()
                 return Session(password)
@@ -223,17 +164,3 @@ async def game(reader, writer):
                 writer.write(f"{p}\r\n")
             await writer.drain()
             tries += 1
-
-
-def main():
-    loop = asyncio.get_event_loop()
-    coro = telnetlib3.create_server(port=6023, shell=game)
-    server = loop.run_until_complete(coro)
-    loop.run_until_complete(server.wait_closed())
-
-
-if __name__ == "__main__":
-    if os.environ.get("DEBUG"):
-        logging.basicConfig(level=logging.DEBUG)
-
-    main()
